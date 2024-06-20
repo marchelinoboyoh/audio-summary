@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload and Enhance Audio File</title>
+    <style>
+        .error {
+            color: red;
+        }
+        .result {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: row;
+        }
+        .column {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+        }
+        #micButton {
+            margin-left: 10px;
+            cursor: pointer;
+        }
+        #micButton.active {
+            color: red;
+        }
+        .loading {
+            display: none;
+            margin-top: 10px;
+        }
+        .loading.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload and Summary Audio File</h1>
+    <form id="uploadForm" action="/" method="POST" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".mp3, .mp4" required>
+        <button type="submit">Process</button>
+        <div id="uploadLoading" class="loading">
+            Uploading file...
+        </div>
+    </form>
+    
+    <div id="result" class="result">
+        <div class="column">
+            <h2>Original Text</h2>
+            <textarea id="originalTextarea"></textarea>
+            <div>
+                <button id="enhanceButton">Modify Text</button>
+                <button id="micButton">🎤</button>
+                <div id="enhanceLoading" class="loading">
+                    Enhancing text...
+                </div>
+            </div>
+        </div>
+        <div class="column">
+            <h2>Enhanced Text</h2>
+            <div id="enhancedText"></div>
+        </div>
+    </div>
+
+    <button id="downloadButton" style="display: none;">Download as Word</button>
+
+    <div>
+        <label for="languageSelect">Select Language:</label>
+        <select id="languageSelect">
+            <option value="en-US">English</option>
+            <option value="zh-CN">Chinese</option>
+        </select>
+    </div>
+
+    <script>
+        const micButton = document.getElementById('micButton');
+        const languageSelect = document.getElementById('languageSelect');
+        let recognition;
+        let isRecording = false;
+        let finalTranscript = '';
+
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = languageSelect.value; // Default language based on selection
+
+            recognition.onstart = function() {
+                isRecording = true;
+                micButton.classList.add('active');
+            };
+
+            recognition.onresult = function(event) {
+                let interimTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript + ' ';
+                    } else {
+                        interimTranscript += event.results[i][0].transcript + ' ';
+                    }
+                }
+
+                document.getElementById('originalTextarea').value = finalTranscript + interimTranscript;
+            };
+
+            recognition.onerror = function(event) {
+                console.error('Speech recognition error', event);
+                isRecording = false;
+                micButton.classList.remove('active');
+            };
+
+            recognition.onend = function() {
+                micButton.classList.remove('active');
+                if (isRecording) {
+                    recognition.start(); // Restart recognition if it was stopped unintentionally
+                }
+            };
+
+            micButton.addEventListener('click', function() {
+                if (isRecording) {
+                    isRecording = false;
+                    recognition.stop();
+                } else {
+                    isRecording = true;
+                    recognition.lang = languageSelect.value; // Set language based on selection
+                    recognition.start();
+                }
+            });
+
+            languageSelect.addEventListener('change', function() {
+                recognition.lang = languageSelect.value;
+                if (isRecording) {
+                    recognition.stop();
+                    recognition.start();
+                }
+            });
+
+        } else {
+            micButton.style.display = 'none';
+            alert('Your browser does not support speech recognition. Please try using Chrome.');
+        }
+
+        document.getElementById('uploadForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            document.getElementById('uploadLoading').classList.add('active');
+            
+            let formData = new FormData(this);
+            
+            try {
+                let response = await fetch('/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                let data = await response.json();
+                displayResults(data);
+
+            } catch (error) {
+                console.error('Error:', error);
+                displayError('An error occurred while processing.');
+            } finally {
+                document.getElementById('uploadLoading').classList.remove('active');
+            }
+        });
+
+        document.getElementById('enhanceButton').addEventListener('click', async function() {
+            let originalText = document.getElementById('originalTextarea').value;
+            document.getElementById('enhanceLoading').classList.add('active');
+            
+            try {
+                let response = await fetch('/enhance', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: originalText })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                let data = await response.json();
+                document.getElementById('enhancedText').innerText = data.enhanced_text;
+                document.getElementById('downloadButton').style.display = 'inline-block';
+
+            } catch (error) {
+                console.error('Error:', error);
+                displayError('An error occurred while enhancing.');
+            } finally {
+                document.getElementById('enhanceLoading').classList.remove('active');
+            }
+        });
+
+        document.getElementById('downloadButton').addEventListener('click', async function() {
+            let enhancedText = document.getElementById('enhancedText').innerText;
+
+            try {
+                let response = await fetch('/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ enhanced_text: enhancedText })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+
+                let blob = await response.blob();
+                let url = window.URL.createObjectURL(blob);
+                let a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = 'enhanced_text.docx';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Error:', error);
+                displayError('An error occurred while downloading.');
+            }
+        });
+
+        function displayResults(data) {
+            document.getElementById('originalTextarea').value = data.original_text;
+            document.getElementById('enhancedText').innerText = '';
+            document.getElementById('downloadButton').style.display = 'none';
+        }
+
+        function displayError(message) {
+            document.getElementById('originalText').innerHTML = '';
+            document.getElementById('enhancedText').innerHTML = '';
+
+            let errorText = document.createElement('p');
+            errorText.innerText = message;
+            errorText.classList.add('error');
+            document.getElementById('originalText').appendChild(errorText);
+            document.getElementById('enhancedText').appendChild(errorText.cloneNode(true));
+        }
+    </script>
+</body>
+</html>
